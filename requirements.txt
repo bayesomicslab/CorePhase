@@ -1,0 +1,6 @@
+numpy>=1.21.0
+numba>=0.55.0
+graph-tool>=2.45
+pysam>=0.17.0
+scipy>=1.7.0
+line-profiler>=3.5.0

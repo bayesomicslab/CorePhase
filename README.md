@@ -1,4 +1,4 @@
-# CorePHASE: Graph-Based Haplotype Phasing
+# CorePHASE: Haplotype Phasing via Graph Homomorphisms
 
 CorePHASE is a computational tool for phasing haplotypes from VCF (Variant Call Format) files using graph homomorphisms and expectation-maximization (EM).
 

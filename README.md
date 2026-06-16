@@ -88,22 +88,22 @@ chr1    1001    .       T       C       60      PASS    .       GT      0|1     
 
 ### Standard phasing
 ```bash
-python corePHASE.py --filename sample.vcf --output_prefix sample_phased --em_init proportional
+python corePHASE.py --filename input.vcf --output_prefix sample_phased --em_init proportional
 ```
 
 ### Phasing with heuristics
 ```bash
-python corePHASE.py --filename sample.vcf --output_prefix sample_phased --greedy 2
+python corePHASE.py --filename input.vcf --output_prefix sample_phased --greedy 2
 ```
 
 ### Parallel processing
 ```bash
-python corePHASE.py --filename sample.vcf --output_prefix sample_phased --threads 4
+python corePHASE.py --filename input.vcf --output_prefix sample_phased --threads 4
 ```
 
 ### Multiple EM iterations
 ```bash
-python corePHASE.py --filename sample.vcf --output_prefix sample_phased --num_it 3
+python corePHASE.py --filename input.vcf --output_prefix sample_phased --num_it 3
 ```
 
 ## Algorithm Details

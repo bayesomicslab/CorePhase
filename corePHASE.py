@@ -1,6 +1,6 @@
 import itertools
 import numpy as np
-import gzip, sys
+import sys
 import numba as nb
 from numba import jit, njit, types
 import random
@@ -943,8 +943,6 @@ def core_phase(genotypes, output_dir, genotype_multiplicities=None, threads=1, d
     homomorph_num = 0
     template_num = 0
 
-    em_init = "proportional"
-
     found_new_core_component = True
     cores_to_process.extend(core_components)
     queue = multiprocessing.Queue()
@@ -1456,7 +1454,7 @@ if(__name__ == "__main__"):
     parser = argparse.ArgumentParser(description="CORE Phase.")
     parser.add_argument("--filename", type=str, help="The input file name",default="input.vcf")
     parser.add_argument("--output_prefix", type=str, help="The output file prefix",default="output")
-    parser.add_argument("--input_filetype", type=str, choices=["raw", "vcf"], default="vcf", help="The input file type (default: vcf)")
+    parser.add_argument("--input_filetype", type=str, choices=["vcf", "bcf"], default="vcf", help="The input file type (default: vcf)")
     parser.add_argument("--test", action="store_true", help="Run in test mode")
     parser.add_argument("--threads", type=int, help="The number of threads to use",default=1)
     parser.add_argument("--draw", action="store_true", help="Draw the core components", default=False)
@@ -1471,7 +1469,6 @@ if(__name__ == "__main__"):
     parser.add_argument("--greedy_genmult", type=int, metavar="MIN_EXPL", help="Use greedy heuristic considering genotype multiplicities: select haplotype pairs that maximize the weighted sum of degrees. If no pairs satisfy min_expl, use the pair with largest weighted degree sum.", default=None)
 
     args = parser.parse_args()
-    args.draw = False
     start_time = time.time()
 
     if args.test:
@@ -1519,34 +1516,41 @@ if(__name__ == "__main__"):
     else:
 
         filename=args.filename
-        if filename.endswith(".gz"):
-            gen_filename = gzip.open(filename, "rb")
-        else:
-            gen_filename = open(filename, "r")
-
-        if args.input_filetype == "raw":
-            genotypes=np.genfromtxt(filename, delimiter=1, dtype=np.uint8)
-        elif args.input_filetype == "vcf" or args.input_filetype == "bcf":
+        if args.input_filetype == "vcf" or args.input_filetype == "bcf":
             input_haplotype = open_bcf_to_read(filename)
             sample_names = list(input_haplotype.header.samples)
-            num_samples = 0
+            num_samples = len(sample_names)
             num_vars = 0
-            for input_vcf_rec in input_haplotype.fetch():
+            if num_samples == 0:
+                raise ValueError(f"Input file contains no samples: {filename}")
+            for input_vcf_rec in input_haplotype:
                 num_vars+=1
-                if num_vars == 1:
-                    num_samples = len(input_vcf_rec.samples)
-
             input_haplotype.close()
+            if num_vars == 0:
+                raise ValueError(f"Input file contains no variants: {filename}")
             genotypes=np.zeros((num_samples,num_vars),dtype=np.uint8)
 
             input_haplotype = open_bcf_to_read(filename)
             var_no = 0
-            for input_vcf_rec in input_haplotype.fetch():
-                sample_no = 0
-                for sample in input_vcf_rec.samples:
-                    output_gt = input_vcf_rec.samples[sample]['GT']
+            for input_vcf_rec in input_haplotype:
+                if input_vcf_rec.alts is None or len(input_vcf_rec.alts) != 1:
+                    raise ValueError(
+                        f"Unsupported variant at {input_vcf_rec.contig}:{input_vcf_rec.pos}; "
+                        "expected exactly one ALT allele"
+                    )
+                if "GT" not in input_vcf_rec.format:
+                    raise ValueError(
+                        f"Missing GT field at {input_vcf_rec.contig}:{input_vcf_rec.pos}"
+                    )
+                for sample_no, sample_name in enumerate(sample_names):
+                    output_gt = input_vcf_rec.samples[sample_name]['GT']
+                    if output_gt is None or len(output_gt) != 2 or any(allele not in (0, 1) for allele in output_gt):
+                        raise ValueError(
+                            f"Unsupported genotype for sample {sample_name!r} at "
+                            f"{input_vcf_rec.contig}:{input_vcf_rec.pos}; expected a called, "
+                            "diploid, biallelic genotype"
+                        )
                     genotypes[sample_no,var_no]=output_gt[0]+output_gt[1]
-                    sample_no+=1
                 var_no+=1
             input_haplotype.close()
 
@@ -1574,8 +1578,6 @@ if(__name__ == "__main__"):
         genotypes[genotypes == 2] = 3
         genotypes[genotypes == 1] = 2
         genotypes[genotypes == 3] = 1
-        gen_filename.close()
-        
         # optionally make the unique matrix read-only
         genotypes.flags.writeable = False
 
@@ -1592,7 +1594,7 @@ if(__name__ == "__main__"):
 
 
     # write out VCF file output
-    vin = VariantFile(filename, "r")
+    vin = open_bcf_to_read(filename)
     # create output VariantFile using the same header
 
     if args.txtout:
@@ -1626,5 +1628,6 @@ if(__name__ == "__main__"):
 
     vin.close()
     vout.close()
-    print("wrote file out to " + args.output_prefix + ".bcf", file=sys.stderr)
+    output_extension = ".vcf" if args.txtout else ".bcf"
+    print("wrote file out to " + args.output_prefix + output_extension, file=sys.stderr)
     print("Process finished --- %s seconds ---" % (time.time() - start_time), file=sys.stderr)

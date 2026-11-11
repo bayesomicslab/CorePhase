@@ -6,42 +6,51 @@ CorePHASE is a computational tool for phasing haplotypes from VCF (Variant Call 
 
 ### Prerequisites
 
-- Python 3.8+
-- graph-tool (requires special installation - see below)
+- Linux, or Windows 10/11 with WSL2 and an Ubuntu distribution
+- Conda or Miniforge installed in that Linux environment
+- Python 3.10 (the version used by the setup below)
+
+`graph-tool` is required and is not available from conda-forge for native Windows (`win-64`). On Windows, run the commands below in your WSL2 Ubuntu terminal, not Windows PowerShell or a native Windows conda prompt.
 
 ### Setting up the conda environment
 
-Graph-tool has specific installation requirements. It's recommended to install it through conda:
+Install the compiled graph and numerical dependencies together from conda-forge. `pysam` is installed from PyPI by `requirements.txt`:
 
 ```bash
-# Create conda environment with graph-tool
-conda create -n corephase -c conda-forge graph-tool
+# Create the environment (run once)
+conda create -n corephase -c conda-forge python=3.10 pip graph-tool numpy numba scipy line_profiler
 
 # Activate the environment
 conda activate corephase
 
-# Install additional dependencies from requirements.txt
-pip install -r requirements.txt
+# Install the remaining Python dependency
+python -m pip install -r requirements.txt
+
+# Verify the required modules before running
+python -c "import graph_tool, numpy, numba, pysam, scipy, line_profiler"
 ```
 
-Alternatively, for more details on graph-tool installation, see: https://git.skewed.de/count0/graph-tool/-/wikis/installation-instructions
+For other installation methods and platform details, see the [graph-tool installation instructions](https://git.skewed.de/count0/graph-tool/-/wikis/installation-instructions).
 
 ## Usage
 
 ### Basic Usage
 
 ```bash
+# Run from the repository root
 python corePHASE.py --filename input.vcf --output_prefix output
 ```
 
 ### Input Format
 
 The input file must be in **VCF (Variant Call Format)** or **BCF (Binary VCF)** format with:
-- Unphased genotypes (GT field with `/` separator)
+- Called, diploid, biallelic genotypes (alleles `0` and `1`)
 - Multiple samples (columns)
 - Multiple variants (rows)
 
-Example VCF structure:
+The VCF may be uncompressed or bgzip-compressed. Input files do not need an index. Missing, haploid, polyploid, or non-biallelic calls are rejected with an error.
+
+Example VCF structure (tab-separated):
 ```
 ##fileformat=VCFv4.2
 #CHROM  POS     ID      REF     ALT     QUAL    FILTER  INFO    FORMAT  sample1 sample2 ...
@@ -67,9 +76,9 @@ chr1    1001    .       T       C       60      PASS    .       GT      0|1     
 ## Command-Line Arguments
 
 ```
---filename FILE                         Input VCF/BCF file (required)
+--filename FILE                         Input VCF/BCF file (default: input.vcf)
 --output_prefix PREFIX                  Output file prefix (default: "output")
---input_filetype {raw,vcf}             Input file type (default: "vcf")
+--input_filetype {vcf,bcf}             Input file type (default: "vcf")
 --threads N                             Number of threads for parallel processing (default: 1)
 --draw                                  Draw core components as SVG files (default: False)
 --em_init {proportional,random}         EM frequency initialization method:
@@ -116,12 +125,12 @@ See the citation.
 
 ## Performance Notes
 
-- For large components (>10,000 vertices), a heuristic is automatically applied
+- For components larger than `--em_component_size_threshold`, the optional degree-based heuristic can be enabled by setting `--em_min_genotype_explained` above 1
 - Parallel processing (`--threads > 1`) significantly speeds up core processing
 
 ## Output Files
 
-- `output.vcf` or `output.bcf`: Phased genotypes
+- `output.vcf`: Phased genotypes (the default)
 - `core*.svg`: Visual representations of graph components (if `--draw` is enabled)
 
 ## Citation

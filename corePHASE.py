@@ -14,21 +14,29 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 import multiprocessing
 import argparse
+from queue import Empty
 from hap_utils import open_bcf_to_read
 
 
-def worker(queue, result_queue, free_fixed_found, core_components, draw, cores_to_process, basis_genotype):
-    while queue:
-        core_to_process = queue.get()
-        if core_to_process is None:  # Check for sentinel value
-            return result_queue
+def worker(queue, result_queue, free_fixed_found, core_components, draw, cores_to_process, basis_genotype, worker_genotypes):
+    global genotypes, M
+    genotypes = worker_genotypes
+    M = genotypes.shape[1]
 
-        start_time = time.time()
-        new_cores = process_core(core_to_process, free_fixed_found, core_components, draw, cores_to_process, basis_genotype)
-        end_time = time.time()
-        for new_core in new_cores:
-            print("finished core with size ",len(new_core[0].get_vertices())," and ",len(genotypes)," genotypes"," in ",end_time-start_time," seconds", file=sys.stderr)
-            result_queue.put(new_core)
+    try:
+        while True:
+            core_to_process = queue.get()
+            if core_to_process is None:
+                return
+
+            start_time = time.time()
+            new_cores = process_core(core_to_process, free_fixed_found, core_components, draw, cores_to_process, basis_genotype)
+            end_time = time.time()
+            for new_core in new_cores:
+                print("finished core with size ",len(new_core[0].get_vertices())," and ",len(genotypes)," genotypes"," in ",end_time-start_time," seconds", file=sys.stderr)
+                result_queue.put(new_core)
+    finally:
+        result_queue.put(None)
 
 
 @njit(types.uint8(types.uint8,types.uint8))
@@ -816,6 +824,7 @@ def clean_component(new_core_component, v):
     # NEW TRYING THIS OUT
     # filter the graph
     new_core_component = GraphView(new_core_component, vfilt = comp.a == component_id)
+    new_core_component = Graph(new_core_component, prune=True)
 
     root_vertex = np.where(new_core_component.vp["root"].get_array()==1)[0][0]
         
@@ -945,11 +954,13 @@ def core_phase(genotypes, output_dir, genotype_multiplicities=None, threads=1, d
 
     found_new_core_component = True
     cores_to_process.extend(core_components)
-    queue = multiprocessing.Queue()
+    process_context = multiprocessing.get_context("spawn")
 
     while cores_to_process:
         print("cores left to process: ",len(cores_to_process), file=sys.stderr)
         if threads > 1:
+            queue = process_context.Queue()
+
             # Enqueue initial cores to process
             for core in cores_to_process:
                 print("found core component with " + str(len(core[0].get_vertices())) + " vertices and " + str(len(core[0].get_edges())) + " edges", file=sys.stderr)
@@ -959,10 +970,10 @@ def core_phase(genotypes, output_dir, genotype_multiplicities=None, threads=1, d
                     continue
                 queue.put(core)
 
-            result_queue = multiprocessing.Queue()
+            result_queue = process_context.Queue()
 
             # Create worker tasks
-            workers = [multiprocessing.Process(target=worker, args=(queue, result_queue, free_fixed_found, core_components, draw, cores_to_process, basis_genotype)) for _ in range(threads)]
+            workers = [process_context.Process(target=worker, args=(queue, result_queue, free_fixed_found, core_components, draw, cores_to_process, basis_genotype, genotypes)) for _ in range(threads)]
 
             # Start worker processes
             for w in workers:
@@ -972,20 +983,38 @@ def core_phase(genotypes, output_dir, genotype_multiplicities=None, threads=1, d
             for _ in range(threads):
                 queue.put(None)
             
-            # Wait for all workers to finish
-            for w in workers:
-                w.join()
-
-            result_queue.put(None)
-
             cores_to_process.clear()
-            while result_queue:
-                new_core = result_queue.get()
+            finished_workers = 0
+            while finished_workers < len(workers):
+                try:
+                    new_core = result_queue.get(timeout=1)
+                except Empty:
+                    failed_workers = [w for w in workers if w.exitcode not in (None, 0)]
+                    if failed_workers:
+                        exit_codes = [w.exitcode for w in failed_workers]
+                        raise RuntimeError(f"CorePHASE worker process failed with exit code(s): {exit_codes}")
+                    if all(w.exitcode is not None for w in workers):
+                        raise RuntimeError("CorePHASE workers exited before reporting completion")
+                    continue
 
-                if new_core is None:  # Check for sentinel value
-                    break
+                if new_core is None:
+                    finished_workers += 1
+                    continue
+
                 cores_to_process.append(new_core)
                 core_components.append(new_core)
+
+            for w in workers:
+                w.join()
+            failed_workers = [w for w in workers if w.exitcode != 0]
+            if failed_workers:
+                exit_codes = [w.exitcode for w in failed_workers]
+                raise RuntimeError(f"CorePHASE worker process failed with exit code(s): {exit_codes}")
+
+            queue.close()
+            queue.join_thread()
+            result_queue.close()
+            result_queue.join_thread()
         else:
             while cores_to_process:
                 core_to_process = cores_to_process.pop(0)
